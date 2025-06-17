@@ -1,50 +1,91 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-from urllib.parse import urljoin
-import time
+from time import sleep
+import random
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-}
+# Configuración
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+HEADERS = {"User-Agent": USER_AGENT}
+DELAY = random.uniform(2, 5)
+TIMEOUT = 15
+BASE_URL = "https://diaonline.supermercadosdia.com.ar"
 
-# Definimos los sitios a scrapear
-supermercados = {
-    "COTO": "https://www.cotodigital3.com.ar/sitios/cdigi/browse/category.jsp?id=1003",
-    # "DIA": "https://diaonline.supermercadosdia.com.ar/category/Despensa",
-    # "Carrefour": "https://www.carrefour.com.ar/despensa"
-}
+def get_page_content(url):
+    """Obtiene el contenido HTML con manejo mejorado de errores"""
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        response.raise_for_status()
+        return BeautifulSoup(response.text, 'html.parser')
+    except Exception as e:
+        print(f"Error al acceder a {url}: {str(e)}")
+        return None
 
-def scrape_coto(url):
-    productos = []
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
+def extract_dia_products():
+    """Extrae productos de DIA con los selectores correctos"""
+    print("\n🔍 Extrayendo productos de DIA...")
+    url = f"{BASE_URL}/almacen"
+    products = []
+    
+    soup = get_page_content(url)
+    if not soup:
+        return []
+    
+    # Selectores basados en el HTML proporcionado
+    product_containers = soup.find_all('article', class_='vtex-product-summary-2-x-element')
+    
+    print(f"Encontrados {len(product_containers)} productos potenciales")
+    
+    for container in product_containers:
+        try:
+            # Extraer nombre del producto
+            name_element = container.find('span', class_='vtex-product-summary-2-x-productBrand')
+            name = name_element.text.strip() if name_element else "Nombre no disponible"
+            
+            # Extraer precio
+            price_element = container.find('span', class_='diaio-store-5-x-sellingPriceValue')
+            price = price_element.text.strip() if price_element else "Precio no disponible"
+            
+            # Extraer URL del producto
+            link_element = container.find('a', class_='vtex-product-summary-2-x-clearLink')
+            product_url = BASE_URL + link_element['href'] if link_element else "URL no disponible"
+            
+            # Extraer precio anterior (tachado)
+            old_price_element = container.find('span', class_='diaio-store-5-x-listPriceValue')
+            old_price = old_price_element.text.strip() if old_price_element else ""
+            
+            # Extraer descuento
+            discount_element = container.find('span', class_='vtex-product-price-1-x-savingsPercentage')
+            discount = discount_element.text.strip() if discount_element else ""
+            
+            products.append({
+                'Supermercado': 'DIA',
+                'Producto': name,
+                'Precio Actual': price,
+                'Precio Anterior': old_price,
+                'Descuento': discount,
+                'URL': product_url
+            })
+            
+            print(f"✅ Añadido: {name[:30]}... - {price} (Descuento: {discount})")
+            
+        except Exception as e:
+            print(f"⚠️ Error procesando producto: {str(e)}")
+            continue
+    
+    return products
 
-    cards = soup.find_all('div', class_='producto')
+def save_to_csv(products, filename="productos_dia.csv"):
+    """Guarda los productos en un archivo CSV"""
+    if not products:
+        print("No se encontraron productos para guardar.")
+        return
+    
+    df = pd.DataFrame(products)
+    df.to_csv(filename, index=False, encoding='utf-8-sig')
+    print(f"\n💾 Datos guardados en '{filename}'")
+    print(f"📊 Total de productos: {len(df)}")
 
-    for card in cards:
-        nombre_tag = card.find('div', class_='descrip_full')
-        precio_tag = card.find('span', class_='atg_store_newPrice')
-        link_tag = card.find('a', href=True)
-
-        nombre = nombre_tag.text.strip() if nombre_tag else 'Nombre no disponible'
-        precio = precio_tag.text.strip().replace('$', '').replace('.', '') if precio_tag else 'Precio no disponible'
-        url_producto = urljoin("https://www.cotodigital3.com.ar", link_tag['href']) if link_tag else 'URL no disponible'
-
-        productos.append(['COTO', nombre, precio, url_producto])
-
-    return productos
-
-# Ejecutamos el script y guardamos en CSV
-data = []
-data.extend(scrape_coto(supermercados["COTO"]))
-# time.sleep(2)
-# data.extend(scrape_dia(supermercados["DIA"]))
-# time.sleep(2)
-# data.extend(scrape_carrefour(supermercados["Carrefour"]))
-
-# Guardamos los datos
-columns = ["Supermercado", "Producto", "Precio", "URL"]
-df = pd.DataFrame(data, columns=columns)
-df.to_csv("productos_supermercados.csv", index=False)
-print("Extracción completada y guardada en productos_supermercados.csv")
+if __name__ == "__main__":
+    products = extract_dia_products()
+    save_to_csv(products)
